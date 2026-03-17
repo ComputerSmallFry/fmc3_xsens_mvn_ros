@@ -9,19 +9,19 @@ XSensClient::XSensClient(const int& udp_port) :
 bool XSensClient::init()
 {
     // Initialize UDP communication
-    udp_socket_ = boost::make_shared<Socket>(IP_UDP);
+    udp_socket_ = std::make_shared<Socket>(IP_UDP);
     if(!udp_socket_->bind(udp_port_))
     {
         std::cout << "Error binding XSens port.";
         return false;
     }
     
-    data_acquisition_thread_ = boost::thread(&XSensClient::dataAcquisitionCallback, this);
+    data_acquisition_thread_ = std::thread(&XSensClient::dataAcquisitionCallback, this);
 
     // Wait for XSens data acquisition activation
     while (!client_active_)
     {
-        boost::this_thread::sleep_for(boost::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
     std::cout << "XSens client initialized." << std::endl;
 
@@ -86,6 +86,11 @@ bool XSensClient::buildXSensModel()
     std::cout << "Available links: " << quaternion_datagram.getData().size() << std::endl;
     for (auto xsens_link: quaternion_datagram.getData())
     {
+        if (xsens_link.segmentId >= static_cast<int>(xsens_model_names.links.size()))
+        {
+            std::cout << "Skipping unknown segment ID: " << xsens_link.segmentId << std::endl;
+            continue;
+        }
         if(!human_data_->setLink(xsens_model_names.links[xsens_link.segmentId], hrii::ergonomics::Link(xsens_model_names.links[xsens_link.segmentId])))
         {
             std::cerr << "Error inserting link " << xsens_model_names.links[xsens_link.segmentId] << ". Exiting...";
@@ -105,7 +110,18 @@ bool XSensClient::buildXSensModel()
     std::cout << "Available joints: " << joint_angles_datagram.getData().size() << std::endl;
     for (size_t joint_cnt = 0; joint_cnt < joint_angles_datagram.getData().size(); joint_cnt++)
     {
+        if (joint_cnt >= xsens_model_names.joints.size())
+        {
+            std::cout << "Skipping unknown joint index: " << joint_cnt << std::endl;
+            continue;
+        }
         auto xsens_joint = joint_angles_datagram.getData()[joint_cnt];
+        if (xsens_joint.parentSegmentId - 1 >= static_cast<int>(link_name_list_.size()) ||
+            xsens_joint.childSegmentId - 1 >= static_cast<int>(link_name_list_.size()))
+        {
+            std::cout << "Skipping joint " << joint_cnt << " with out-of-range segment IDs" << std::endl;
+            continue;
+        }
         std::cout << joint_cnt << ") " << link_name_list_[xsens_joint.parentSegmentId-1] << "(" << xsens_joint.parentSegmentId-1 << ") -> " << 
                                           link_name_list_[xsens_joint.childSegmentId-1] << "(" << xsens_joint.childSegmentId-1 << ")" << std::endl; 
         std::cout << xsens_model_names.joints[joint_cnt] << std::endl;

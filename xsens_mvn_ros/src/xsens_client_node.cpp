@@ -1,62 +1,66 @@
 #include <xsens_mvn_ros/XSensClient.h>
 
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <tf2_ros/transform_broadcaster.h>
-#include <geometry_msgs/TransformStamped.h>
-#include <eigen_conversions/eigen_msg.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <geometry_msgs/msg/point.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
+#include <xsens_mvn_ros_msgs/msg/link_state_array.hpp>
+#include <xsens_mvn_ros_msgs/msg/link_state.hpp>
 
-#include <sensor_msgs/JointState.h>
-#include <xsens_mvn_ros_msgs/LinkStateArray.h>
+#include <tf2_eigen/tf2_eigen.hpp>
 
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "xsens_client");
+    rclcpp::init(argc, argv);
 
-    ros::NodeHandle nh("~");
+    auto node = std::make_shared<rclcpp::Node>("xsens_client");
 
-    tf2_ros::TransformBroadcaster tf_broadcaster;
+    tf2_ros::TransformBroadcaster tf_broadcaster(node);
 
-    // Data parser initialization
-    std::string model_name, reference_frame;
-    nh.param<std::string>("model_name", model_name, "skeleton");
-    nh.param<std::string>("reference_frame", reference_frame, "world");
-    int xsens_udp_port;
-    nh.param<int>("udp_port", xsens_udp_port, 8001);
+    // Parameters
+    node->declare_parameter<std::string>("model_name", "skeleton");
+    node->declare_parameter<std::string>("reference_frame", "world");
+    node->declare_parameter<int>("udp_port", 8001);
 
-    // ROS publishers
-    ros::Publisher joint_state_publisher = nh.advertise<sensor_msgs::JointState>("joint_states", 10);
-    ros::Publisher link_state_publisher = nh.advertise<xsens_mvn_ros_msgs::LinkStateArray>("link_states", 10);
-    ros::Publisher com_publisher = nh.advertise<geometry_msgs::Point>("com", 10);
+    std::string model_name = node->get_parameter("model_name").as_string();
+    std::string reference_frame = node->get_parameter("reference_frame").as_string();
+    int xsens_udp_port = node->get_parameter("udp_port").as_int();
 
-    boost::shared_ptr<XSensClient> xsens_client_ptr;
+    // Publishers
+    auto joint_state_publisher = node->create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
+    auto link_state_publisher = node->create_publisher<xsens_mvn_ros_msgs::msg::LinkStateArray>("link_states", 10);
+    auto com_publisher = node->create_publisher<geometry_msgs::msg::Point>("com", 10);
+
+    std::shared_ptr<XSensClient> xsens_client_ptr;
     try
     {
-        xsens_client_ptr = boost::make_shared<XSensClient>(xsens_udp_port);
+        xsens_client_ptr = std::make_shared<XSensClient>(xsens_udp_port);
     }
     catch(const std::exception& err)
     {
-        ROS_ERROR_STREAM(err.what());
+        RCLCPP_ERROR_STREAM(node->get_logger(), err.what());
         return -1;
     }
-    
+
     if(!xsens_client_ptr->init())
     {
-        ROS_ERROR_STREAM("XSens client initialization failed.");
+        RCLCPP_ERROR_STREAM(node->get_logger(), "XSens client initialization failed.");
         return -1;
     }
-    
-    ros::Rate loop_rate(120);
 
-    while(ros::ok())
+    rclcpp::Rate loop_rate(120);
+
+    while(rclcpp::ok())
     {
         // Publish joint state
-        if (joint_state_publisher.getNumSubscribers() > 0)
+        if (joint_state_publisher->get_subscription_count() > 0)
         {
-            sensor_msgs::JointState joint_state_msg;
-            joint_state_msg.header.stamp = ros::Time::now();
+            sensor_msgs::msg::JointState joint_state_msg;
+            joint_state_msg.header.stamp = node->now();
 
             auto joints = xsens_client_ptr->getHumanData()->getJoints();
-            for (std::map<std::string, hrii::ergonomics::Joint>::iterator joint_it = joints.begin(); joint_it != joints.end(); joint_it++)
+            for (auto joint_it = joints.begin(); joint_it != joints.end(); joint_it++)
             {
                 joint_state_msg.name.push_back(model_name+"_"+joint_it->first+"_x");
                 joint_state_msg.name.push_back(model_name+"_"+joint_it->first+"_y");
@@ -65,21 +69,21 @@ int main(int argc, char** argv)
                 joint_state_msg.position.push_back(joint_it->second.state.angles[1]/180*3.1415);
                 joint_state_msg.position.push_back(joint_it->second.state.angles[2]/180*3.1415);
             }
-            
-            joint_state_publisher.publish(joint_state_msg);
+
+            joint_state_publisher->publish(joint_state_msg);
         }
-        
+
         // Publish link tf and state
-        xsens_mvn_ros_msgs::LinkStateArray link_state_msg;
+        xsens_mvn_ros_msgs::msg::LinkStateArray link_state_msg;
         auto links = xsens_client_ptr->getHumanData()->getLinks();
-        for (std::map<std::string, hrii::ergonomics::Link>::iterator link_it = links.begin(); link_it != links.end(); link_it++)
+        for (auto link_it = links.begin(); link_it != links.end(); link_it++)
         {
             // Publish link tf
-            if (!(link_it->second.state.orientation.x() == 0 && link_it->second.state.orientation.y() == 0 
+            if (!(link_it->second.state.orientation.x() == 0 && link_it->second.state.orientation.y() == 0
                 && link_it->second.state.orientation.z() == 0 && link_it->second.state.orientation.w()))
             {
-                geometry_msgs::TransformStamped transform_stamped;
-                transform_stamped.header.stamp = ros::Time::now();
+                geometry_msgs::msg::TransformStamped transform_stamped;
+                transform_stamped.header.stamp = node->now();
                 transform_stamped.header.frame_id = reference_frame;
                 transform_stamped.child_frame_id = model_name+"_"+link_it->first;
                 transform_stamped.transform.translation.x = link_it->second.state.position[0];
@@ -92,17 +96,19 @@ int main(int argc, char** argv)
                 tf_broadcaster.sendTransform(transform_stamped);
             }
 
-            if (link_state_publisher.getNumSubscribers() > 0)
+            if (link_state_publisher->get_subscription_count() > 0)
             {
                 // Publish link state
-                xsens_mvn_ros_msgs::LinkState link_state;
+                xsens_mvn_ros_msgs::msg::LinkState link_state;
                 link_state.header.frame_id = link_it->first;
-                link_state.header.stamp = ros::Time::now();
-                tf::pointEigenToMsg(link_it->second.state.position, link_state.pose.position);
-                tf::quaternionEigenToMsg(link_it->second.state.orientation, link_state.pose.orientation);
+                link_state.header.stamp = node->now();
+                link_state.pose.position = tf2::toMsg(link_it->second.state.position);
+                link_state.pose.orientation = tf2::toMsg(link_it->second.state.orientation);
+
                 Eigen::Matrix<double, 6, 1> link_twist;
                 link_twist << link_it->second.state.velocity.linear, link_it->second.state.velocity.angular;
-                tf::twistEigenToMsg(link_twist , link_state.twist);
+                link_state.twist = tf2::toMsg(link_twist);
+
                 link_state.accel.linear.x = link_it->second.state.acceleration.linear[0];
                 link_state.accel.linear.y = link_it->second.state.acceleration.linear[1];
                 link_state.accel.linear.z = link_it->second.state.acceleration.linear[2];
@@ -112,23 +118,21 @@ int main(int argc, char** argv)
 
                 link_state_msg.states.push_back(link_state);
             }
-
         }
 
-        if (link_state_publisher.getNumSubscribers() > 0)
-            link_state_publisher.publish(link_state_msg);
+        if (link_state_publisher->get_subscription_count() > 0)
+            link_state_publisher->publish(link_state_msg);
 
-        
-        if (com_publisher.getNumSubscribers() > 0)
+        if (com_publisher->get_subscription_count() > 0)
         {
-            geometry_msgs::Point com_msg;
-            tf::pointEigenToMsg(xsens_client_ptr->getHumanData()->getCOM(), com_msg);
-            com_publisher.publish(com_msg);
+            geometry_msgs::msg::Point com_msg;
+            com_msg = tf2::toMsg(xsens_client_ptr->getHumanData()->getCOM());
+            com_publisher->publish(com_msg);
         }
 
-        ros::spinOnce();
+        rclcpp::spin_some(node);
         loop_rate.sleep();
     }
-    
+
     return 0;
 }

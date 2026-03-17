@@ -1,5 +1,6 @@
 <?xml version="1.0"?>
-<package format="2">
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
 
     <name>xsens_mvn_ros</name>
     <version>0.0.1</version>
@@ -14,23 +15,19 @@
     <url>https://github.com/hrii-iit/xsens_mvn_ros</url>
     <author email="mattia.leonori@iit.it">Mattia Leonori</author>
 
-    <buildtool_depend>catkin</buildtool_depend>
+    <buildtool_depend>ament_cmake</buildtool_depend>
 
-    <build_depend>message_generation</build_depend>
-    <exec_depend>message_runtime</exec_depend>
-
-    <depend>roscpp</depend>
-    <depend>rospy</depend>
+    <depend>rclcpp</depend>
     <depend>geometry_msgs</depend>
     <depend>sensor_msgs</depend>
     <depend>std_msgs</depend>
     <depend>tf2_ros</depend>
+    <depend>tf2_eigen</depend>
     <depend>urdf</depend>
-    <depend>eigen_conversions</depend>
-    <depend>roslib</depend>
     <depend>xsens_mvn_ros_msgs</depend>
 
     <export>
+        <build_type>ament_cmake</build_type>
     </export>
-    
+
 </package>

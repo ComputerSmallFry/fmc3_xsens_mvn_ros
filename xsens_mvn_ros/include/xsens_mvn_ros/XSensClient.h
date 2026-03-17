@@ -3,7 +3,10 @@
 
 #define MAX_MVN_DATAGRAM_SIZE 5000
 
-#include <boost/thread.hpp>
+#include <thread>
+#include <memory>
+#include <chrono>
+#include <atomic>
 #include <xsens_mvn_ros/Socket.h>
 #include <xsens_mvn_ros/HumanDataHandler.h>
 #include <xsens_mvn_sdk/parsermanager.h>
@@ -22,15 +25,15 @@ class XSensClient
 
     private:
         int udp_port_;
-        boost::shared_ptr<Socket> udp_socket_;
+        std::shared_ptr<Socket> udp_socket_;
         ParserManager parser_manager_;
         hrii::ergonomics::HumanDataHandler::Ptr human_data_;
         std::vector<std::string> link_name_list_, joint_name_list_;
-        
-        boost::thread data_acquisition_thread_;
+
+        std::thread data_acquisition_thread_;
         void dataAcquisitionCallback();
         char data_buffer_[MAX_MVN_DATAGRAM_SIZE];
-        bool client_active_;
+        std::atomic<bool> client_active_;
         
         bool buildXSensModel();
         QuaternionDatagram waitForQuaternionDatagram();
