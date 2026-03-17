@@ -7,3 +7,12 @@ docs/doxygen/*
 docs/sphinx/*
 # Except for Sphinx source folder
 !docs/sphinx/source
+
+# Python
+__pycache__/
+*.pyc
+
+# Colcon build artifacts
+build/
+install/
+log/
