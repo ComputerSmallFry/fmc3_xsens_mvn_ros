@@ -164,7 +164,8 @@ def main() -> None:
             raw_cmd = xsens_to_gr2(xsens.human_data)
 
             # 4. Safety pipeline
-            cmd = clamp_to_limits(raw_cmd)
+            limited_cmd = clamp_to_limits(raw_cmd)
+            cmd = limited_cmd
             cmd = low_pass_filter(cmd, filtered_cmd)
             filtered_cmd = copy.deepcopy(cmd)
             cmd = rate_limit(cmd, prev_cmd, dt)
@@ -178,7 +179,7 @@ def main() -> None:
                 if cmd_dur > cmd_time_max:
                     cmd_time_max = cmd_dur
             if args.print_xsens and loop_count % 25 == 0:
-                _print_xsens_state(xsens.human_data, cmd)
+                _print_xsens_state(xsens.human_data, raw_cmd, limited_cmd, cmd)
             elif aurora_client is None and loop_count % 25 == 0:
                 _print_cmd(cmd)
 
@@ -217,11 +218,17 @@ def _print_cmd(cmd: Dict[str, List[float]]) -> None:
     print("[dry-run]\n" + "\n".join(parts))
 
 
-def _print_xsens_state(human_data, cmd: Dict[str, List[float]]) -> None:
+def _print_xsens_state(
+    human_data,
+    raw_cmd: Dict[str, List[float]],
+    limited_cmd: Dict[str, List[float]],
+    cmd: Dict[str, List[float]],
+) -> None:
     joint_names = [
         "c1_head",
         "left_shoulder",
         "left_elbow",
+        "left_wrist",
         "right_shoulder",
         "right_elbow",
         "right_wrist",
@@ -234,16 +241,35 @@ def _print_xsens_state(human_data, cmd: Dict[str, List[float]]) -> None:
         angles = ", ".join(f"{v:+.1f}" for v in joint.state.angles)
         raw_parts.append(f"  {joint_name}: [{angles}] deg")
 
-    cmd_parts = []
+    raw_parts_cmd = []
+    limited_parts = []
+    final_parts = []
     for group in config.UPPER_BODY_GROUPS:
-        vals = cmd.get(group, [])
-        formatted = ", ".join(f"{v:+.3f}" for v in vals)
-        cmd_parts.append(f"  {group}: [{formatted}]")
+        raw_vals = raw_cmd.get(group, [])
+        raw_formatted = ", ".join(f"{v:+.3f}" for v in raw_vals)
+        raw_parts_cmd.append(f"  {group}: [{raw_formatted}]")
+
+        limited_vals = limited_cmd.get(group, [])
+        limited_formatted = ", ".join(f"{v:+.3f}" for v in limited_vals)
+        clamp_flags = [
+            "*" if abs(r - l) > 1e-6 else " "
+            for r, l in zip(raw_vals, limited_vals)
+        ]
+        clamp_suffix = "".join(clamp_flags)
+        limited_parts.append(f"  {group}: [{limited_formatted}]  clamp={clamp_suffix}")
+
+        final_vals = cmd.get(group, [])
+        final_formatted = ", ".join(f"{v:+.3f}" for v in final_vals)
+        final_parts.append(f"  {group}: [{final_formatted}]")
 
     lines = ["[xsens]"]
     lines.extend(raw_parts or ["  <no joint data>"])
-    lines.append("[mapped]")
-    lines.extend(cmd_parts)
+    lines.append("[mapped-raw]")
+    lines.extend(raw_parts_cmd)
+    lines.append("[mapped-limited]")
+    lines.extend(limited_parts)
+    lines.append("[cmd-sent]")
+    lines.extend(final_parts)
     print("\n".join(lines))
 
 
