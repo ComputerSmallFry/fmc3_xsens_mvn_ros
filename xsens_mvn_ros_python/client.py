@@ -42,6 +42,7 @@ class XSensUDPClient:
             raise ValueError("Port number should be bigger than 2000")
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.bind((self.bind_host, self.udp_port))
 
     def read_data(self) -> BaseDatagram:

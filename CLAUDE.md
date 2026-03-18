@@ -11,6 +11,9 @@ ROS2 package bridging Xsens motion capture systems (Awinda Suit, Link Suit, Meta
 This is an ament_cmake package (C++17) targeting ROS2 Jazzy. It must live inside a colcon workspace's `src/` directory.
 
 ```bash
+# First time: initialize submodules (xsens_mvn_ros_msgs, xsens_mvn_sdk)
+git submodule update --init --recursive
+
 # Build (from colcon workspace root)
 colcon build --packages-select xsens_mvn_ros_msgs xsens_mvn_ros
 source install/setup.bash
@@ -21,7 +24,24 @@ ros2 launch xsens_mvn_ros xsens_client.launch.py
 # Run without RViz, custom port
 ros2 launch xsens_mvn_ros xsens_client.launch.py launch_rviz:=false udp_port:=9001
 
-# Launch parameters: model_name (default: skeleton), reference_frame (default: world), udp_port (default: 8001)
+# Launch parameters:
+#   model_name (default: skeleton), reference_frame (default: world),
+#   udp_port (default: 8001), launch_rviz (default: true),
+#   rviz_config_file (default: package-provided config)
+```
+
+### Python Package
+
+`xsens_mvn_ros_python/` is a standalone Python module (no ROS2 dependency) for parsing Xsens UDP datagrams.
+
+```bash
+# Run the UDP debug listener
+python -m xsens_mvn_ros_python.demo --port 8001
+
+# Run unit tests
+python -m pytest xsens_mvn_ros_python/tests/
+# or
+python -m unittest xsens_mvn_ros_python.tests.test_protocol
 ```
 
 ## CI
@@ -30,9 +50,10 @@ GitHub Actions via `industrial_ci` — tests on ROS2 Jazzy. Triggered on push, P
 
 ## Architecture
 
-Two ament packages in this repo:
-- `xsens_mvn_ros/` — main package (C++ node + libraries)
+Three packages in this repo:
+- `xsens_mvn_ros/` — main C++ ROS2 package (ament_cmake node + libraries)
 - `xsens_mvn_ros_msgs/` — custom message definitions (git submodule, rosidl)
+- `xsens_mvn_ros_python/` — standalone Python UDP parser module (no ROS2 dependency)
 - `xsens_mvn_ros/xsens_mvn_sdk/` — Xsens SDK parser library (git submodule)
 
 ### Data Flow

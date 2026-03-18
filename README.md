@@ -17,6 +17,7 @@
 - Xsens MVN UDP parser SDK 子模块 `xsens_mvn_sdk`
 - 发布关节角、链节状态、质心和 TF
 - 附带 Python 版 UDP 解析与调试工具
+- Xsens → Fourier GR-2 上半身遥操作桥接（`gr2_xsens_bridge`）
 
 ## 仓库结构
 
@@ -29,6 +30,7 @@
 │   └── src/
 ├── xsens_mvn_ros_msgs/         # 自定义消息定义
 ├── xsens_mvn_ros_python/       # Python 版 UDP 解析与调试工具
+├── gr2_xsens_bridge/           # Xsens → Fourier GR-2 上半身遥操作桥接
 ├── docs/                       # 文档资源（历史内容）
 └── .gitmodules                 # 子模块定义
 ```
@@ -53,28 +55,28 @@ ROS 2 topics + TF
 
 ### `xsens_mvn_ros`
 
-主包位于 [xsens_mvn_ros](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros)。
+主包位于 [xsens_mvn_ros](xsens_mvn_ros)。
 
 关键文件：
 
-- [xsens_client_node.cpp](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros/src/xsens_client_node.cpp)：ROS 2 节点入口，负责发布话题和 TF
-- [XSensClient.cpp](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros/src/xsens_client/XSensClient.cpp)：UDP 数据采集与人体状态更新
-- [Socket.cpp](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros/src/xsens_client/Socket.cpp)：基础 UDP socket 封装
-- [HumanDataHandler.cpp](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros/src/xsens_client/HumanDataHandler.cpp)：内存中的人体状态容器
-- [xsens_client.launch.py](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros/launch/xsens_client.launch.py)：ROS 2 启动文件
+- [xsens_client_node.cpp](xsens_mvn_ros/src/xsens_client_node.cpp)：ROS 2 节点入口，负责发布话题和 TF
+- [XSensClient.cpp](xsens_mvn_ros/src/xsens_client/XSensClient.cpp)：UDP 数据采集与人体状态更新
+- [Socket.cpp](xsens_mvn_ros/src/xsens_client/Socket.cpp)：基础 UDP socket 封装
+- [HumanDataHandler.cpp](xsens_mvn_ros/src/xsens_client/HumanDataHandler.cpp)：内存中的人体状态容器
+- [xsens_client.launch.py](xsens_mvn_ros/launch/xsens_client.launch.py)：ROS 2 启动文件
 
 ### `xsens_mvn_ros_msgs`
 
-消息包位于 [xsens_mvn_ros_msgs](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros_msgs)。
+消息包位于 [xsens_mvn_ros_msgs](xsens_mvn_ros_msgs)。
 
 包含：
 
-- [LinkState.msg](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros_msgs/msg/LinkState.msg)
-- [LinkStateArray.msg](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros_msgs/msg/LinkStateArray.msg)
+- [LinkState.msg](xsens_mvn_ros_msgs/msg/LinkState.msg)
+- [LinkStateArray.msg](xsens_mvn_ros_msgs/msg/LinkStateArray.msg)
 
 ### `xsens_mvn_ros_python`
 
-Python 调试工具位于 [xsens_mvn_ros_python](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros_python)。
+Python 调试工具位于 [xsens_mvn_ros_python](xsens_mvn_ros_python)。
 
 适合以下场景：
 
@@ -84,8 +86,34 @@ Python 调试工具位于 [xsens_mvn_ros_python](/home/phl/workspace/xsens_mvn_r
 
 入口文件：
 
-- [demo.py](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros_python/demo.py)
-- [protocol.py](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros_python/protocol.py)
+- [demo.py](xsens_mvn_ros_python/demo.py)
+- [protocol.py](xsens_mvn_ros_python/protocol.py)
+
+### `gr2_xsens_bridge`
+
+Xsens 动捕服 → Fourier GR-2 人形机器人上半身遥操作桥接，位于 [gr2_xsens_bridge](gr2_xsens_bridge)。
+
+功能：
+
+- 接收 Xsens UDP 关节角数据，实时映射到 GR-2 上半身 17 个关节（双臂 7×2 + 腰 1 + 头 2）
+- T-pose 校准（支持保存/加载校准文件）
+- 安全机制：关节限幅、速率限制、低通滤波、数据超时冻结
+- 启停平滑 ramp，Ctrl+C 安全退出
+
+快速使用：
+
+```bash
+# Dry-run 模式（不连接 GR-2，打印指令）
+python3 -m gr2_xsens_bridge --dry-run --xsens-port 9763
+
+# 连接 GR-2
+python3 -m gr2_xsens_bridge --xsens-port 9763 --domain-id 123
+
+# 强制重新校准
+python3 -m gr2_xsens_bridge --recalibrate
+```
+
+详细说明见 [使用说明](gr2_xsens_bridge/使用说明.md)。
 
 ## 依赖
 
@@ -300,7 +328,7 @@ python -m xsens_mvn_ros_python.demo --port 8001 --bootstrap-debug
 
 仓库中提供了一个关节状态示例输出：
 
-- [example_msg.md](/home/phl/workspace/xsens_mvn_ros/xsens_mvn_ros/example_msg.md)
+- [example_msg.md](xsens_mvn_ros/example_msg.md)
 
 ## 开发说明
 
@@ -310,4 +338,4 @@ python -m xsens_mvn_ros_python.demo --port 8001 --bootstrap-debug
 
 ## License
 
-本项目采用 BSD License，详见 [LICENSE](/home/phl/workspace/xsens_mvn_ros/LICENSE)。
+本项目采用 BSD License，详见 [LICENSE](LICENSE)。
