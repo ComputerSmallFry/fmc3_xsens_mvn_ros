@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import json
-import os
 import signal
 import time
 from typing import Dict, List
@@ -22,12 +20,8 @@ from .safety import (
     rate_limit,
 )
 
-
 def drain_latest(client: XSensUDPClient) -> bool:
-    """Read all pending UDP packets, keep only the latest state.
-
-    Returns True if at least one packet was consumed.
-    """
+    """Read all pending UDP packets, keep only the latest state."""
     sock = client.socket
     if sock is None:
         return False
@@ -60,74 +54,6 @@ def ramp_to_pose(
         aurora_client.set_group_cmd(position_cmd=cmd)
         time.sleep(1.0 / rate)
 
-
-CALIBRATION_FILE = os.path.join(
-    os.path.dirname(__file__), "tpose_calibration.json"
-)
-
-
-def save_calibration(offsets: Dict[str, List[float]], path: str = CALIBRATION_FILE) -> None:
-    with open(path, "w") as f:
-        json.dump(offsets, f, indent=2)
-    print(f"[bridge] Calibration saved to {path}")
-
-
-def load_calibration(path: str = CALIBRATION_FILE) -> Dict[str, List[float]] | None:
-    if not os.path.exists(path):
-        return None
-    with open(path) as f:
-        data = json.load(f)
-    print(f"[bridge] Calibration loaded from {path}")
-    return data
-
-
-def calibrate_tpose(
-    xsens: XSensUDPClient,
-    duration: float = 3.0,
-    save: bool = True,
-) -> Dict[str, List[float]]:
-    """Record T-pose baseline: average mapping output over *duration* seconds.
-
-    The user should stand in T-pose (arms out, palms down) while this runs.
-    The returned offsets are subtracted from live mapping output so that
-    T-pose maps to GR-2 zero pose.
-    """
-    print(f"[bridge] Stand in T-pose for {duration:.0f} seconds ...")
-    samples: List[Dict[str, List[float]]] = []
-    t_end = time.monotonic() + duration
-    while time.monotonic() < t_end:
-        drain_latest(xsens)
-        samples.append(xsens_to_gr2(xsens.human_data))
-        time.sleep(0.02)
-
-    if not samples:
-        return config.ZERO_POSE
-
-    # Average per group/joint.
-    avg: Dict[str, List[float]] = {}
-    for group in config.UPPER_BODY_GROUPS:
-        n_joints = len(samples[0][group])
-        avg[group] = [
-            sum(s[group][j] for s in samples) / len(samples)
-            for j in range(n_joints)
-        ]
-    print("[bridge] T-pose calibration recorded.")
-    if save:
-        save_calibration(avg)
-    return avg
-
-
-def apply_calibration(
-    cmd: Dict[str, List[float]],
-    offsets: Dict[str, List[float]],
-) -> Dict[str, List[float]]:
-    """Subtract T-pose offsets so that T-pose maps to zero."""
-    return {
-        group: [v - o for v, o in zip(vals, offsets.get(group, [0.0] * len(vals)))]
-        for group, vals in cmd.items()
-    }
-
-
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Xsens MVN -> GR-2 upper-body bridge")
     p.add_argument("--xsens-port", type=int, default=config.XSENS_UDP_PORT,
@@ -136,10 +62,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help=f"DDS domain ID (default: {config.GR2_DOMAIN_ID})")
     p.add_argument("--dry-run", action="store_true",
                     help="Print commands instead of sending to GR-2")
-    p.add_argument("--no-calibrate", action="store_true",
-                    help="Skip T-pose calibration entirely (use zero offsets)")
-    p.add_argument("--recalibrate", action="store_true",
-                    help="Force new T-pose calibration even if saved file exists")
+    p.add_argument("--print-xsens", action="store_true",
+                    help="Print raw Xsens joint angles and mapped commands while running")
     return p
 
 
@@ -150,6 +74,9 @@ def main() -> None:
     print(f"[bridge] Binding Xsens UDP on port {args.xsens_port} ...")
     xsens = XSensUDPClient(udp_port=args.xsens_port)
     xsens.bind()
+    # 4MB receive buffer — survive slow set_group_cmd calls
+    import socket as _sock
+    xsens.socket.setsockopt(_sock.SOL_SOCKET, _sock.SO_RCVBUF, 4 * 1024 * 1024)
 
     aurora_client = None
     try:
@@ -166,16 +93,16 @@ def main() -> None:
             aurora_client = AuroraClient.get_instance(
                 domain_id=args.domain_id, robot_name="gr2"
             )
+            if aurora_client is None:
+                raise RuntimeError(
+                    "AuroraClient initialization failed. Check simulator/AuroraCore status and domain ID."
+                )
             time.sleep(1.0)
 
-            # FSM: Upper body user command (legs stay standing)
-            print("[bridge] Setting FSM -> UpperBodyUserCommand(11) ...")
-            aurora_client.set_fsm_state(11)
+            # FSM: PdStand — control upper body under PD standing mode
+            print("[bridge] Setting FSM -> PdStand(2) ...")
+            aurora_client.set_fsm_state(2)
             time.sleep(1.0)
-
-            print("[bridge] Setting upper FSM -> MoveCommand(4) ...")
-            aurora_client.set_upper_fsm_state(4)
-            time.sleep(0.5)
 
             # Configure PD gains
             print("[bridge] Configuring PD gains ...")
@@ -196,26 +123,11 @@ def main() -> None:
         signal.signal(signal.SIGINT, _shutdown)
         signal.signal(signal.SIGTERM, _shutdown)
 
-        # ---- T-pose calibration ----
-        if args.no_calibrate:
-            tpose_offsets = copy.deepcopy(config.ZERO_POSE)
-        elif args.recalibrate:
-            tpose_offsets = calibrate_tpose(xsens)
-        else:
-            # Try loading saved calibration first.
-            loaded = load_calibration()
-            if loaded is not None:
-                tpose_offsets = loaded
-            else:
-                tpose_offsets = calibrate_tpose(xsens)
-
         # ---- Startup ramp ----
-        # Read a few frames to get a valid initial target.
         for _ in range(10):
             drain_latest(xsens)
             time.sleep(0.02)
-
-        initial_target = apply_calibration(xsens_to_gr2(xsens.human_data), tpose_offsets)
+        initial_target = xsens_to_gr2(xsens.human_data)
         initial_target = clamp_to_limits(initial_target)
         print("[bridge] Ramping to initial pose ...")
         if aurora_client is not None:
@@ -227,19 +139,21 @@ def main() -> None:
         # ---- Main loop ----
         print(f"[bridge] Running at {config.CONTROL_RATE_HZ} Hz. Ctrl+C to stop.")
         loop_count = 0
+        cmd_time_max = 0.0
         while running:
             t_start = time.monotonic()
 
-            # 1. Drain Xsens UDP
+            # 1. Drain every pending Xsens packet and keep only the newest state.
             got_data = drain_latest(xsens)
+            t_drain = time.monotonic() - t_start
             if got_data:
                 timeout_monitor.feed()
 
-            # 2. Check timeout
+            # 2. Timeout check
             if timeout_monitor.check():
-                # Hold last safe position
+                data_age = time.monotonic() - timeout_monitor.last_data_time
                 if loop_count % 50 == 0:
-                    print("[bridge] WARNING: Xsens data timeout, holding position")
+                    print(f"[bridge] WARNING: timeout ({data_age:.2f}s) drain={t_drain*1000:.1f}ms cmd_max={cmd_time_max*1000:.1f}ms")
                 if aurora_client is not None:
                     aurora_client.set_group_cmd(position_cmd=prev_cmd)
                 _sleep_remainder(t_start, dt)
@@ -247,7 +161,7 @@ def main() -> None:
                 continue
 
             # 3. Map
-            raw_cmd = apply_calibration(xsens_to_gr2(xsens.human_data), tpose_offsets)
+            raw_cmd = xsens_to_gr2(xsens.human_data)
 
             # 4. Safety pipeline
             cmd = clamp_to_limits(raw_cmd)
@@ -258,9 +172,14 @@ def main() -> None:
 
             # 5. Send
             if aurora_client is not None:
+                t_cmd = time.monotonic()
                 aurora_client.set_group_cmd(position_cmd=cmd)
-            elif loop_count % 25 == 0:
-                # Dry-run: print every 0.5s
+                cmd_dur = time.monotonic() - t_cmd
+                if cmd_dur > cmd_time_max:
+                    cmd_time_max = cmd_dur
+            if args.print_xsens and loop_count % 25 == 0:
+                _print_xsens_state(xsens.human_data, cmd)
+            elif aurora_client is None and loop_count % 25 == 0:
                 _print_cmd(cmd)
 
             _sleep_remainder(t_start, dt)
@@ -296,6 +215,36 @@ def _print_cmd(cmd: Dict[str, List[float]]) -> None:
         formatted = ", ".join(f"{v:+.3f}" for v in vals)
         parts.append(f"  {group}: [{formatted}]")
     print("[dry-run]\n" + "\n".join(parts))
+
+
+def _print_xsens_state(human_data, cmd: Dict[str, List[float]]) -> None:
+    joint_names = [
+        "c1_head",
+        "left_shoulder",
+        "left_elbow",
+        "right_shoulder",
+        "right_elbow",
+        "right_wrist",
+    ]
+    raw_parts = []
+    for joint_name in joint_names:
+        joint = human_data.get_joint(joint_name)
+        if joint is None:
+            continue
+        angles = ", ".join(f"{v:+.1f}" for v in joint.state.angles)
+        raw_parts.append(f"  {joint_name}: [{angles}] deg")
+
+    cmd_parts = []
+    for group in config.UPPER_BODY_GROUPS:
+        vals = cmd.get(group, [])
+        formatted = ", ".join(f"{v:+.3f}" for v in vals)
+        cmd_parts.append(f"  {group}: [{formatted}]")
+
+    lines = ["[xsens]"]
+    lines.extend(raw_parts or ["  <no joint data>"])
+    lines.append("[mapped]")
+    lines.extend(cmd_parts)
+    print("\n".join(lines))
 
 
 if __name__ == "__main__":
